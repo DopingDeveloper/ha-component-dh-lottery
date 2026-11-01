@@ -16,7 +16,7 @@ import os
 import random
 from dataclasses import dataclass
 from typing import Optional, List
-from urllib.parse import urlencode, parse_qs, quote
+from urllib.parse import urlencode, parse_qs
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding as sym_padding
@@ -99,8 +99,9 @@ def _encrypt(plaintext: str, jsessionid: str) -> str:
     encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
     ciphertext = encryptor.update(padded) + encryptor.finalize()
 
-    raw = salt.hex() + iv.hex() + base64.b64encode(ciphertext).decode("ascii")
-    return quote(raw, safe="")
+    # aiohttp form data performs the one URL-encoding pass used by the
+    # browser's encrypt.js + raw `q=<encrypted>` request.
+    return salt.hex() + iv.hex() + base64.b64encode(ciphertext).decode("ascii")
 
 
 def _decrypt(enc_text: str, jsessionid: str) -> str:
@@ -138,7 +139,7 @@ class DhPension720:
     # ------------------------------------------------------------------
 
     async def _ensure_session(self):
-        """el.dhlottery.co.kr DHJSESSIONID 확보
+        """el.dhlottery.co.kr JSESSIONID 확보
 
         동행복권 웹사이트가 사용하는 공식 진입점(TotalGame.jsp)을 먼저
         방문해 www.dhlottery.co.kr 로그인 세션을 게임 서버로 전달한 뒤,
@@ -169,11 +170,10 @@ class DhPension720:
                     )
 
             cookies = self.client.session.cookie_jar.filter_cookies(URL(EL_BASE_URL))
-            for name in ("DHJSESSIONID", "JSESSIONID"):
-                morsel = cookies.get(name)
-                if morsel and getattr(morsel, "value", None):
-                    self._jsessionid = morsel.value
-                    break
+            # The official encrypt.js derives its AES key from JSESSIONID.
+            morsel = cookies.get("JSESSIONID")
+            if morsel and getattr(morsel, "value", None):
+                self._jsessionid = morsel.value
         except Exception as e:
             self._jsessionid = None
             if isinstance(e, DhPension720Error):
@@ -183,9 +183,11 @@ class DhPension720:
             ) from e
 
         if not self._jsessionid:
-            raise DhPension720Error("DHJSESSIONID를 가져올 수 없습니다. el.dhlottery.co.kr 접근 불가")
+            raise DhPension720Error(
+                "연금복권 구매 암호화용 JSESSIONID를 가져올 수 없습니다."
+            )
 
-        _LOGGER.info(f"[PENSION720] DHJSESSIONID 확보: {self._jsessionid[:8]}...")
+        _LOGGER.info("[PENSION720] 구매용 JSESSIONID 확보 완료")
 
     def _reset_session(self):
         """세션 리셋 (재시도 시 사용)"""
@@ -227,9 +229,10 @@ class DhPension720:
     async def async_get_round_info(self) -> dict:
         """현재 회차 정보 조회.
 
-        1차: el.dhlottery.co.kr/roundRemainTime.do (DHJSESSIONID 필요)
+        1차: el.dhlottery.co.kr/roundRemainTime.do (JSESSIONID 필요)
         실패 시 2차: 공개 당첨결과의 최신 추첨 회차 + 1
         실패 시 3차: www.dhlottery.co.kr 구매이력에서 최근 회차 추출
+        실패 시 4차: 첫 추첨일(2020-05-07)과 매주 목요일 주기로 판매 회차 계산
         """
         # 1차 시도: el.dhlottery.co.kr
         try:
@@ -282,6 +285,25 @@ class DhPension720:
         except Exception as e:
             _LOGGER.warning(f"[PENSION720] 구매이력 회차 조회도 실패: {e}")
 
+        # 4차 fallback: 연금복권 720+는 2020-05-07(목) 1회 추첨을
+        # 시작으로 매주 목요일에 추첨한다. 외부 회차 API와 구매이력이
+        # 모두 비어 있어도 다음 목요일의 판매 회차는 결정적이다.
+        today = datetime.datetime.now().date()
+        first_draw = datetime.date(2020, 5, 7)
+        days_until_thursday = (3 - today.weekday()) % 7
+        next_draw = today + datetime.timedelta(days=days_until_thursday)
+        current_round = ((next_draw - first_draw).days // 7) + 1
+        if current_round > 0:
+            _LOGGER.warning(
+                "[PENSION720] 공식 추첨 주기 기반 판매 회차 fallback: %s",
+                current_round,
+            )
+            return {
+                "round": current_round,
+                "remainTime": None,
+                "source": "calendar_fallback",
+            }
+
         return {"round": 0, "remainTime": None}
 
     # ------------------------------------------------------------------
@@ -331,7 +353,7 @@ class DhPension720:
         # ── Step 0: 구매 시간 확인 ────────────────────
         self._check_buy_time()
 
-        # ── 세션 확보 (DHJSESSIONID) ─────────────────
+        # ── 세션 확보 (JSESSIONID) ───────────────────
         try:
             await self._ensure_session()
         except DhPension720Error:
@@ -382,7 +404,15 @@ class DhPension720:
         p1 = self._parse(self._dec(r1["q"]))
         order_no = p1.get("orderNo", "")
         if not order_no:
-            raise DhPension720PurchaseError("주문번호 생성 실패")
+            result_code = p1.get("resultCode", p1.get("errorCode", "unknown"))
+            result_message = p1.get(
+                "resultMsg", p1.get("errorMsg", p1.get("message", ""))
+            )
+            response_keys = ",".join(sorted(p1.keys())) or "none"
+            raise DhPension720PurchaseError(
+                "주문번호 생성 실패 "
+                f"(code={result_code}, message={result_message}, keys={response_keys})"
+            )
         _LOGGER.info(f"[PURCHASE] orderNo={order_no}")
 
         # ── Step 3: connPro.do ────────────────────────
