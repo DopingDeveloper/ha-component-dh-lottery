@@ -13,7 +13,6 @@ import logging
 import base64
 import json
 import os
-import random
 import re
 from dataclasses import dataclass
 from typing import Optional, List
@@ -375,10 +374,8 @@ class DhPension720:
         return await self._async_buy([PensionTicket(group=g) for g in range(1, 6)])
 
     async def async_buy_random_all_groups(self) -> DhPension720BuyData:
-        """랜덤 번호 1개를 뽑아 1~5조 전부 동일 번호로 구매"""
-        number = random.randint(0, 999999)
-        _LOGGER.info(f"[PURCHASE] 동일번호 5조 구매 - 번호: {number:06d}")
-        return await self._async_buy([PensionTicket(group=g, number=number) for g in range(1, 6)])
+        """서버가 배정한 동일번호를 1~5조 세트로 구매."""
+        return await self._async_buy_set()
 
     async def async_buy_manual(self, tickets: List[PensionTicket]) -> DhPension720BuyData:
         """수동 구매: 조와 번호를 직접 지정
@@ -575,6 +572,150 @@ class DhPension720:
         sold_number = info[0] if len(info) > 0 and len(info[0]) == 6 else number_text
         sold_group = info[4] if len(info) > 4 and info[4] in {"1", "2", "3", "4", "5"} else str(group)
         return f"{sold_group}조 {sold_number}"
+
+    async def _async_buy_set(self) -> DhPension720BuyData:
+        """서버 SA 계약으로 동일번호 1~5조를 한 번의 connPro에서 구매."""
+        self._check_buy_time()
+        try:
+            await self._ensure_session()
+        except DhPension720Error:
+            self._reset_session()
+            await self.client.async_login()
+            await self._ensure_session()
+
+        round_info = await self.async_get_round_info()
+        current_round = int(round_info.get("round", 0))
+        if not current_round:
+            raise DhPension720PurchaseError("회차 정보를 가져올 수 없습니다")
+        remain = round_info.get("remainTime")
+        if remain is not None and int(remain) <= 0:
+            raise DhPension720PurchaseError("판매 마감되었습니다")
+
+        assign_request = urlencode([
+            ("ROUND", current_round),
+            ("SEL_NO", ""),
+            ("BUY_CNT", ""),
+            ("AUTO_SEL_SET", "SA"),
+            ("SEL_CLASS", ""),
+            ("BUY_TYPE", "A"),
+            ("ACCS_TYPE", "01"),
+        ])
+        assigned = await self._post_encrypted("makeAutoNo.do", assign_request)
+        self._require_success(assigned, "동일번호 배정")
+        number_text = str(assigned.get("selLotNo", "")).split(",")[0]
+        if not number_text.isdigit() or len(number_text) != 6:
+            raise DhPension720PurchaseError("동일번호 배정 응답 형식 오류")
+
+        order_request = urlencode([
+            ("ROUND", current_round),
+            ("SEL_NO", number_text),
+            ("BUY_CNT", "5"),
+            ("AUTO_SEL_SET", "SA"),
+            ("SEL_CLASS", ""),
+            ("BUY_TYPE", "A"),
+            ("ACCS_TYPE", "01"),
+        ])
+        order = await self._post_encrypted("makeOrderNo.do", order_request)
+        self._require_success(order, "동일번호 주문 생성")
+        order_no = str(order.get("orderNo", ""))
+        order_date = str(order.get("orderDate", ""))
+        if not order_no or not order_date:
+            raise DhPension720PurchaseError("동일번호 주문번호 또는 주문일시가 없습니다.")
+
+        digits = list(number_text)
+        buy_no = ",".join(f"{group}{number_text}" for group in range(1, 6))
+        purchase_request = urlencode([
+            ("ROUND", current_round),
+            ("FLAG", ""),
+            ("BUY_KIND", "01"),
+            ("BUY_NO", buy_no),
+            ("BUY_CNT", "5"),
+            ("BUY_SET_TYPE", "SA,SA,SA,SA,SA"),
+            ("BUY_TYPE", "A,A,A,A,A,"),
+            ("ACCS_TYPE", "01"),
+            ("orderNo", order_no),
+            ("orderDate", order_date),
+            ("TRANSACTION_ID", ""),
+            ("WIN_DATE", ""),
+            ("USER_ID", self._game_user_id or self.client.username),
+            ("PAY_TYPE", ""),
+            ("resultErrorCode", ""),
+            ("resultErrorMsg", ""),
+            ("resultOrderNo", ""),
+            ("WORKING_FLAG", "false"),
+            ("NUM_CHANGE_TYPE", ""),
+            ("auto_process", "Y"),
+            ("set_type", "SA"),
+            ("classnum", ""),
+            ("selnum", number_text),
+            ("buytype", "A"),
+            ("num1", digits[0]),
+            ("num2", digits[1]),
+            ("num3", digits[2]),
+            ("num4", digits[3]),
+            ("num5", digits[4]),
+            ("num6", digits[5]),
+            ("DSEC", "0"),
+            ("CLOSE_DATE", ""),
+            ("verifyYN", "N"),
+            ("curdeposit", "0"),
+            ("curpay", "5000"),
+        ])
+
+        # 세트 connPro도 실제 결제이며 비멱등이므로 단 한 번만 호출합니다.
+        purchase = await self._post_encrypted("connPro.do", purchase_request)
+        result_code = str(purchase.get("resultCode", ""))
+        if result_code != "100":
+            message = purchase.get("resultMsg") or purchase.get("resultMessage") or ""
+            raise DhPension720PurchaseError(
+                f"동일번호 구매 실패 (code={result_code or 'unknown'}, message={message}) — "
+                "결과가 불명확하면 구매 내역을 먼저 확인하세요."
+            )
+
+        data = purchase.get("data")
+        if not isinstance(data, dict):
+            nested = purchase.get("resultMsg")
+            if isinstance(nested, str) and nested.lstrip().startswith("{"):
+                try:
+                    nested_result = json.loads(nested)
+                    data = nested_result.get("data", {}) if isinstance(nested_result, dict) else {}
+                except json.JSONDecodeError:
+                    data = {}
+            else:
+                data = {}
+
+        raw = str(data.get("prchsLtNoInfoLstCn", ""))
+        rows = [row.strip() for row in re.split(r"[,;\n]+", raw) if row.strip()]
+        tickets: List[str] = []
+        seen_groups = set()
+        for row in rows:
+            fields = row.split("|")
+            sold_number = fields[0] if len(fields) > 0 else ""
+            sold_group = fields[4] if len(fields) > 4 else ""
+            if (
+                sold_number != number_text
+                or sold_group not in {"1", "2", "3", "4", "5"}
+                or sold_group in seen_groups
+            ):
+                raise DhPension720PurchaseError(
+                    "동일번호 구매 응답 형식이 올바르지 않습니다 — 구매 내역을 확인하세요."
+                )
+            seen_groups.add(sold_group)
+            tickets.append(f"{sold_group}조 {sold_number}")
+
+        if not tickets:
+            raise DhPension720PurchaseError(
+                "동일번호 구매 결과가 불명확합니다 — 재시도하지 말고 구매 내역을 확인하세요."
+            )
+
+        return DhPension720BuyData(
+            round_no=current_round,
+            ticket_count=len(tickets),
+            tickets=", ".join(tickets),
+            fail_count=5 - len(tickets),
+            fail_tickets="" if len(tickets) == 5 else "일부 조 결과는 구매 내역을 확인하세요.",
+            amount=len(tickets) * 1000,
+        )
 
     async def _async_buy(self, tickets: List[PensionTicket]) -> DhPension720BuyData:
         """검증된 브라우저 구매 계약으로 최대 5게임을 순차 구매."""

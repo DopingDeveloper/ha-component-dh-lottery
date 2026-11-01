@@ -1,4 +1,3 @@
-import random
 from typing import List
 
 from homeassistant.components.button import ButtonEntity, ButtonDeviceClass
@@ -211,8 +210,5 @@ class DhPension720SameNumberBuyButton(DhPension720BuyButton):
         )
 
     async def async_press(self) -> None:
-        number = random.randint(0, 999999)
-        self._tickets = [
-            f"수동, {group}, {number:06d}" for group in range(1, 6)
-        ]
+        self._tickets = ["동일번호자동"]
         await super().async_press()

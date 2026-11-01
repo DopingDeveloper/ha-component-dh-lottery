@@ -206,13 +206,20 @@ async def _async_setup_service(
                 raise ValueError("이 계정에서 연금복권 720+가 활성화되지 않았습니다.")
 
             tickets: List[PensionTicket] = []
+            same_number_auto = False
             for i in range(1, 6):
                 value = call.data.get(f"ticket_{i}")
                 if not value:
                     continue
+                if same_number_auto:
+                    raise ValueError("동일번호자동은 다른 티켓과 함께 사용할 수 없습니다.")
                 parts = [part.strip() for part in value.split(",")]
                 mode = parts[0]
-                if mode == "자동":
+                if mode == "동일번호자동":
+                    if i != 1 or tickets:
+                        raise ValueError("동일번호자동은 단독으로만 사용할 수 있습니다.")
+                    same_number_auto = True
+                elif mode == "자동":
                     group = int(parts[1]) if len(parts) > 1 else i
                     tickets.append(PensionTicket(group=group))
                 elif mode == "수동" and len(parts) == 3:
@@ -225,9 +232,14 @@ async def _async_setup_service(
                         "'자동, 조' 또는 '수동, 조, 6자리번호' 형식을 사용하세요."
                     )
 
-            result = await lottery_data.pension_720_coord.pension_720.async_buy_manual(
-                tickets
-            )
+            if same_number_auto:
+                result = await (
+                    lottery_data.pension_720_coord.pension_720.async_buy_random_all_groups()
+                )
+            else:
+                result = await lottery_data.pension_720_coord.pension_720.async_buy_manual(
+                    tickets
+                )
             message = (
                 f"제 {result.round_no}회\n"
                 f"구매 수량: {result.ticket_count}장\n"
