@@ -233,7 +233,16 @@ class DhPension720:
 
     @staticmethod
     def _parse(decrypted: str) -> dict:
-        """URL-encoded 응답 → dict"""
+        """복호화된 JSON 또는 URL-encoded 응답을 dict로 변환."""
+        stripped = decrypted.strip()
+        if stripped.startswith("{"):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
         params = parse_qs(decrypted, keep_blank_values=True)
         return {k: v[0] if len(v) == 1 else v for k, v in params.items()}
 
