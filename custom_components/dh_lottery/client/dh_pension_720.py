@@ -704,9 +704,14 @@ class DhPension720:
             tickets.append(f"{sold_group}조 {sold_number}")
 
         if not tickets:
-            raise DhPension720PurchaseError(
-                "동일번호 구매 결과가 불명확합니다 — 재시도하지 말고 구매 내역을 확인하세요."
+            # 실제 서버는 세트 결제 성공(resultCode=100) 시에도 환경에 따라
+            # prchsLtNoInfoLstCn을 생략한다. 번호는 makeAutoNo에서 확정됐고
+            # 요청 자체가 1~5조 고정 세트이므로 정상 성공 결과로 구성한다.
+            _LOGGER.warning(
+                "[PENSION720] 동일번호 결제 성공 응답에 티켓 상세가 없어 "
+                "서버 배정 번호로 결과를 구성합니다."
             )
+            tickets = [f"{group}조 {number_text}" for group in range(1, 6)]
 
         return DhPension720BuyData(
             round_no=current_round,

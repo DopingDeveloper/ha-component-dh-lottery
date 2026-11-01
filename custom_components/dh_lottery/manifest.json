@@ -10,6 +10,6 @@
   "requirements": ["cryptography>=44.0.0"],
   "ssdp": [],
   "zeroconf": [],
-  "version": "0.3.1",
+  "version": "0.3.2",
   "issue_tracker": "https://github.com/stkang/ha-component-dh-lottery/issues"
 }
