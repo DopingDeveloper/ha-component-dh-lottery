@@ -3,7 +3,7 @@
 DH Lottery Pension 720+ Client
 연금복권 720+ 구매 및 정보 조회
 
-암호화: AES-128-CBC + PBKDF2(SHA256, 1000iter) / key = JSESSIONID[:32]
+암호화: AES-128-CBC + PBKDF2(SHA256, 1000iter) / key = game session id[:32]
 Base URL: https://el.dhlottery.co.kr
 Purchase Flow: makeOrderNo.do → connPro.do → checkDeposit.do
 """
@@ -135,28 +135,45 @@ class DhPension720:
         self._jsessionid: Optional[str] = None
 
     # ------------------------------------------------------------------
-    # Session helpers - 로또와 동일한 세션 재사용, JSESSIONID만 확보
+    # Session helpers - 로또와 동일한 세션 재사용, 게임 서버 세션 확보
     # ------------------------------------------------------------------
 
     async def _ensure_session(self):
-        """el.dhlottery.co.kr JSESSIONID 확보
+        """el.dhlottery.co.kr 게임 서버 세션 쿠키 확보.
 
         동행복권 웹사이트가 사용하는 공식 진입점(TotalGame.jsp)을 먼저
         방문해 www.dhlottery.co.kr 로그인 세션을 게임 서버로 전달한 뒤,
-        실제 연금복권 페이지에서 인증 상태를 확인합니다.
+        실제 연금복권 페이지에서 인증 상태를 확인합니다. 애드온과 동일하게
+        실제 쿠키명인 DHJSESSIONID를 우선하고 JSESSIONID를 보조로 사용합니다.
         """
         if self._jsessionid:
             return
 
         entry_url = f"{EL_BASE_URL}/game/TotalGame.jsp?LottoId=LP72"
         game_url = f"{EL_BASE_URL}/game/pension720/game.jsp"
+        cookie_names = ("DHJSESSIONID", "JSESSIONID")
+        response_cookies = {}
+        page = ""
         try:
+            # 애드온과 동일하게 기존 게임 서버 쿠키를 먼저 재사용합니다.
+            cookies = self.client.session.cookie_jar.filter_cookies(URL(EL_BASE_URL))
+            for name in cookie_names:
+                morsel = cookies.get(name)
+                if morsel and getattr(morsel, "value", None):
+                    self._jsessionid = morsel.value
+                    break
+
+            if self._jsessionid:
+                _LOGGER.info("[PENSION720] 기존 구매용 게임 세션 확보 완료")
+                return
+
             async with self.client.session.get(
                 entry_url,
                 allow_redirects=True,
                 headers={"Referer": "https://www.dhlottery.co.kr/"},
             ) as resp:
                 await resp.text()
+                response_cookies.update(resp.cookies)
 
             async with self.client.session.get(
                 game_url,
@@ -164,16 +181,31 @@ class DhPension720:
                 headers={"Referer": entry_url},
             ) as resp:
                 page = await resp.text()
-                if "로그인후 이용하세요" in page or "로그인 후 이용하세요" in page:
-                    raise DhPension720Error(
-                        "연금복권 구매 서버 로그인 세션을 생성하지 못했습니다."
-                    )
+                response_cookies.update(resp.cookies)
 
-            cookies = self.client.session.cookie_jar.filter_cookies(URL(EL_BASE_URL))
-            # The official encrypt.js derives its AES key from JSESSIONID.
-            morsel = cookies.get("JSESSIONID")
-            if morsel and getattr(morsel, "value", None):
-                self._jsessionid = morsel.value
+            # Path 속성 때문에 cookie_jar 필터에서 제외되는 경우를 대비해
+            # 애드온처럼 응답 Set-Cookie도 직접 확인합니다.
+            for name in cookie_names:
+                morsel = response_cookies.get(name)
+                if morsel and getattr(morsel, "value", None):
+                    self._jsessionid = morsel.value
+                    break
+
+            if not self._jsessionid:
+                cookies = self.client.session.cookie_jar.filter_cookies(URL(EL_BASE_URL))
+                for name in cookie_names:
+                    morsel = cookies.get(name)
+                    if morsel and getattr(morsel, "value", None):
+                        self._jsessionid = morsel.value
+                        break
+
+            if (
+                not self._jsessionid
+                and ("로그인후 이용하세요" in page or "로그인 후 이용하세요" in page)
+            ):
+                raise DhPension720Error(
+                    "연금복권 구매 서버 로그인 세션을 생성하지 못했습니다."
+                )
         except Exception as e:
             self._jsessionid = None
             if isinstance(e, DhPension720Error):
@@ -184,10 +216,10 @@ class DhPension720:
 
         if not self._jsessionid:
             raise DhPension720Error(
-                "연금복권 구매 암호화용 JSESSIONID를 가져올 수 없습니다."
+                "연금복권 구매용 게임 세션 쿠키를 가져올 수 없습니다."
             )
 
-        _LOGGER.info("[PENSION720] 구매용 JSESSIONID 확보 완료")
+        _LOGGER.info("[PENSION720] 구매용 게임 세션 확보 완료")
 
     def _reset_session(self):
         """세션 리셋 (재시도 시 사용)"""
@@ -353,7 +385,7 @@ class DhPension720:
         # ── Step 0: 구매 시간 확인 ────────────────────
         self._check_buy_time()
 
-        # ── 세션 확보 (JSESSIONID) ───────────────────
+        # ── 세션 확보 (DHJSESSIONID/JSESSIONID) ──────
         try:
             await self._ensure_session()
         except DhPension720Error:
