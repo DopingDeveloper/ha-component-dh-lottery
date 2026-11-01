@@ -311,7 +311,12 @@ class DhPension720HistorySensor(DhSensor, SensorEntity):
             return
 
         result = history[self._no - 1]
-        self._attr_name = f"{result.round_no}회 구매/당첨 내역"
+        purchase_number = result.purchase_number
+        self._attr_name = (
+            f"{result.round_no}회 {purchase_number} 구매/당첨 내역"
+            if purchase_number
+            else f"{result.round_no}회 구매/당첨 내역"
+        )
         self._attr_native_value = result.result
         self._attr_icon = (
             "mdi:clock-outline"
@@ -323,6 +328,7 @@ class DhPension720HistorySensor(DhSensor, SensorEntity):
         self._attr_extra_state_attributes = {
             "추첨 회차": result.round_no,
             "구매일": result.issue_dt,
+            "구매 번호": purchase_number,
             "바코드": result.barcode,
             "구매 수량": result.ticket_count,
             "구매 금액": result.amount,

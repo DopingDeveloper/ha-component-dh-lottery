@@ -79,6 +79,14 @@ class DhPension720BuyHistoryData:
     amount: int
     result: str
 
+    @property
+    def purchase_number(self) -> str:
+        """구매 이력의 gmInfo를 사람이 읽기 좋은 조/번호로 변환합니다."""
+        match = re.fullmatch(r"\s*([1-5])\s*[:조]\s*(\d{1,6})\s*", self.barcode)
+        if not match:
+            return self.barcode
+        return f"{match.group(1)}조 {int(match.group(2)):06d}"
+
 
 # ---------------------------------------------------------------------------
 # AES encryption / decryption  (matches game.jsp encrypt() / decrypt())
