@@ -9,7 +9,7 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from .client.dh_lottery_client import DhLotteryClient, DhLotteryError
-from .const import DOMAIN, TITLE, CONF_LOTTO_645
+from .const import DOMAIN, TITLE, CONF_LOTTO_645, CONF_PENSION_720
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
         vol.Optional(CONF_LOTTO_645, default=True): cv.boolean,
+        vol.Optional(CONF_PENSION_720, default=True): cv.boolean,
     }
 )
 

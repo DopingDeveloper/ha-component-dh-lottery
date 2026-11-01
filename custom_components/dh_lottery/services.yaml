@@ -27,3 +27,32 @@ buy_lotto_645:
       required: false
       selector:
         text:
+
+buy_pension_720:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: dh_lottery
+    ticket_1:
+      required: true
+      selector:
+        text:
+    ticket_2:
+      required: false
+      selector:
+        text:
+    ticket_3:
+      required: false
+      selector:
+        text:
+    ticket_4:
+      required: false
+      selector:
+        text:
+    ticket_5:
+      required: false
+      selector:
+        text:

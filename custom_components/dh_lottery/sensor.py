@@ -14,15 +14,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import DhLotteryConfigEntry, DhLotteryData
 from .const import (
     CONF_LOTTO_645,
+    CONF_PENSION_720,
     BRAND_NAME,
     get_dh_lotto_645_device_info,
     get_dh_lottery_device_info,
+    get_dh_pension_720_device_info,
 )
 from .coordinator import (
     DhLotto645Coordinator,
     DhLotteryCoordinator,
     DhCoordinator,
     DhLotto645BuyData,
+    DhPension720Coordinator,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,6 +48,10 @@ async def async_setup_entry(
         entities.append(DhLotto645WinningSensor(data.lotto_645_coord))
         for i in range(1, 6):
             entities.append(DhLotto645HistorySensor(data.lotto_645_coord, i))
+    if entry.data.get(CONF_PENSION_720, True):
+        entities.append(DhPension720RoundSensor(data.pension_720_coord))
+        for i in range(1, 6):
+            entities.append(DhPension720HistorySensor(data.pension_720_coord, i))
     async_add_entities(entities)
 
 
@@ -255,3 +262,71 @@ class DhAccumulatedPrizeSensor(DhSensor, SensorEntity):
                 "업데이트": self.coordinator.data["update_dt"]
             }
             self.async_write_ha_state()
+
+
+class DhPension720RoundSensor(DhSensor, SensorEntity):
+    """연금복권 720+ 현재 회차 센서입니다."""
+
+    _attr_name = "현재 회차"
+    _attr_icon = "mdi:counter"
+
+    def __init__(self, coordinator: DhPension720Coordinator):
+        super().__init__(coordinator, "pension_720_round")
+        self._attr_device_info = get_dh_pension_720_device_info(
+            coordinator.client.username
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        round_info = self.coordinator.data.get("round_info") or {}
+        self._attr_native_value = round_info.get("round", 0)
+        self._attr_extra_state_attributes = {
+            "판매 잔여시간": round_info.get("remainTime"),
+            "업데이트": self.coordinator.data["update_dt"],
+        }
+        self.async_write_ha_state()
+
+
+class DhPension720HistorySensor(DhSensor, SensorEntity):
+    """연금복권 720+ 최근 구매 및 당첨 결과 센서입니다."""
+
+    def __init__(self, coordinator: DhPension720Coordinator, no: int):
+        super().__init__(coordinator, f"pension_720_history_{no}")
+        self._no = no
+        self._attr_name = f"최근 구매/당첨 내역 {no}"
+        self._attr_icon = "mdi:ticket-confirmation-outline"
+        self._attr_device_info = get_dh_pension_720_device_info(
+            coordinator.client.username
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        history = self.coordinator.data.get("buy_history") or []
+        if len(history) < self._no:
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {
+                "업데이트": self.coordinator.data["update_dt"]
+            }
+            self.async_write_ha_state()
+            return
+
+        result = history[self._no - 1]
+        self._attr_name = f"{result.round_no}회 구매/당첨 내역"
+        self._attr_native_value = result.result
+        self._attr_icon = (
+            "mdi:clock-outline"
+            if result.result == "미추첨"
+            else "mdi:trophy-outline"
+            if "당첨" in result.result and "낙첨" not in result.result
+            else "mdi:close-circle-outline"
+        )
+        self._attr_extra_state_attributes = {
+            "추첨 회차": result.round_no,
+            "구매일": result.issue_dt,
+            "바코드": result.barcode,
+            "구매 수량": result.ticket_count,
+            "구매 금액": result.amount,
+            "당첨 결과": result.result,
+            "업데이트": self.coordinator.data["update_dt"],
+        }
+        self.async_write_ha_state()

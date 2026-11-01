@@ -1,4 +1,4 @@
-# 동행복권: 로또 6/45
+# 동행복권: 로또 6/45 + 연금복권 720+
 
 ![HACS][hacs-shield]
 
@@ -40,7 +40,7 @@
 - HomeAssistant 사이드패널 > 설정 > 기기 및 서비스 > 통합 구성요소 추가
 - 검색창에서 `동행 복권` 입력 후 선택
 - 아이디 비밀번호 입력
-- 로또 6/45 체크 (추후 다른 게임도 추가 예정)
+- 로또 6/45 및 연금복권 720+ 체크
 
 <img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/config_flow.png?raw=true" title="ConfigFlow" alt="ConfigFlow" />
 <img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/service.png?raw=true" title="Service" alt="Service" />
@@ -59,6 +59,17 @@ data:
   game_2: 수동, 13, 44, 42, 16, 42, 1
   game_3: 반자동, 3, 4, 5
   game_4: 자동
+
+---
+
+# 연금복권 720+ 구매
+# 자동: "자동, 조", 수동: "수동, 조, 6자리번호"
+# 통합 구성요소에는 1장 자동, 1~5조 자동, 동일번호 1~5조 구매 버튼도 생성됩니다.
+service: dh_lottery.buy_pension_720
+data:
+  entity_id: sensor.dh_아이디_deposit
+  ticket_1: 자동, 1
+  ticket_2: 수동, 2, 123456
 
 ```
 

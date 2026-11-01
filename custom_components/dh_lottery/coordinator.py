@@ -13,11 +13,13 @@ from .client.dh_lottery_client import (
     DhLotteryBalanceData,
 )
 from .client.dh_lotto_645 import DhLotto645
+from .client.dh_pension_720 import DhPension720
 from .const import (
     COORDINATOR_UPDATE_INTERVAL,
     LOTTO_645_UPDATE_INTERVAL,
     LOTTERY_ACCUMULATED_PRIZE_UPDATE_INTERVAL,
     LOTTERY_BALANCE_UPDATE_INTERVAL,
+    PENSION_720_UPDATE_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -262,3 +264,55 @@ class DhLotto645Coordinator(DhCoordinator):
             winning_data = await self.lotto_645.async_get_round_info(round_no)
             self.winning_dict[round_no] = winning_data
         return winning_data
+
+
+class DhPension720Coordinator(DhCoordinator):
+    """연금복권 720+ 데이터 업데이트 코디네이터입니다."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        client: DhLotteryClient,
+        lottery_refresh_func: Callable[[], Awaitable[None]],
+    ):
+        super().__init__(
+            hass,
+            _LOGGER,
+            name="DhPension720Coordinator",
+            update_interval=COORDINATOR_UPDATE_INTERVAL,
+        )
+        self.client = client
+        self.pension_720 = DhPension720(client)
+        self.lottery_refresh_func = lottery_refresh_func
+        self._last_updated: Optional[datetime.datetime] = None
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """현재 회차와 최근 구매/당첨 내역을 업데이트합니다."""
+        now = datetime.datetime.now()
+
+        if 0 <= now.hour < 6 and self.data is not None:
+            return self.data
+
+        if self._last_updated and (
+            now - self._last_updated
+        ) < PENSION_720_UPDATE_INTERVAL:
+            return self.data
+
+        try:
+            async with async_timeout.timeout(20):
+                _LOGGER.info("연금복권 720+ 정보를 업데이트합니다.")
+                round_info = await self.pension_720.async_get_round_info()
+                buy_history = await self.pension_720.async_get_buy_history()
+            self._last_updated = now
+            return {
+                "round_info": round_info,
+                "buy_history": buy_history[:5],
+                "update_dt": now.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        except DhLotteryError as err:
+            raise UpdateFailed(f"API와의 통신 오류: {err}") from err
+
+    async def async_clear_refresh(self):
+        """캐시를 비우고 연금복권 데이터를 새로고침합니다."""
+        self._last_updated = None
+        await self.async_request_refresh()
