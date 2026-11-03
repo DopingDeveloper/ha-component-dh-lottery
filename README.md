@@ -179,7 +179,13 @@ HACS에서 새 버전을 다시 다운로드한 후 Home Assistant를 재시작�
 
 ## 출처
 
-이 저장소는 [stkang/ha-component-dh-lottery](https://github.com/stkang/ha-component-dh-lottery)를 기반으로 로또 6/45와 연금복권 720+ 기능을 확장한 포크입니다.
+이 저장소는 다음 공개 프로젝트를 기반 또는 참고하여 제작했습니다.
+
+- [stkang/ha-component-dh-lottery](https://github.com/stkang/ha-component-dh-lottery): Home Assistant 동행복권 커스텀 통합 구성요소의 기반 프로젝트
+- [darkhowk/ha-dhlottery](https://github.com/darkhowk/ha-dhlottery): 연금복권 720+ Home Assistant 애드온 및 기능 구현 참고
+- [umi-corp/autolotto720](https://github.com/umi-corp/autolotto720): 연금복권 720+ 구매 요청 흐름 참고
+
+각 프로젝트 제작자와 기여자에게 감사드립니다.
 
 [hacs-shield]: https://img.shields.io/badge/HACS-Custom-red.svg
 [version-shield]: https://img.shields.io/badge/version-0.3.3-blue.svg
