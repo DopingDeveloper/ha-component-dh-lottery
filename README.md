@@ -116,8 +116,11 @@ Home Assistant에서 동행복권 계정의 예치금과 구매 내역을 확인
 - 실제 구매내역에서 현재 회차의 1~5조가 같은 번호인지 확인합니다.
 - 구매되지 않았으면 목요일 마감 전 지정 시각에 최종 재시도합니다.
 - 예치금 부족 또는 실제 구매내역 미확인 시 알림을 보냅니다.
+- 새 당첨번호가 발표되면 구매한 조·번호별 등수와 당첨금을 알립니다.
 
 두 블루프린트 모두 `최근 구매/당첨 내역 1`~`5` 센서를 빠짐없이 선택해야 합니다. 알림 동작의 기본값은 Home Assistant 지속 알림이며, Slack이나 모바일 앱 알림으로 바꿀 때는 `notification_title`과 `notification_message` 변수를 사용하세요.
+
+기존 연금복권 블루프린트 자동화는 업데이트 후 편집 화면에서 `연금복권 720+ 최근 당첨번호 센서`를 추가로 선택해야 결과 알림을 받을 수 있습니다.
 
 ## 액션 사용법
 
@@ -214,4 +217,4 @@ HACS에서 새 버전을 다시 다운로드한 후 Home Assistant를 재시작�
 각 프로젝트 제작자와 기여자에게 감사드립니다.
 
 [hacs-shield]: https://img.shields.io/badge/HACS-Custom-red.svg
-[version-shield]: https://img.shields.io/badge/version-0.4.0-blue.svg
+[version-shield]: https://img.shields.io/badge/version-0.4.1-blue.svg

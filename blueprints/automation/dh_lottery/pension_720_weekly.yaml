@@ -1,9 +1,10 @@
 blueprint:
-  name: 동행복권 연금복권 720+ 동일번호 주간 자동 구매
+  name: 동행복권 연금복권 720+ 주간 자동 구매 및 결과 알림
   description: >-
     동행복권 통합의 연금복권 720+ 동일번호 1~5조를 월요일에 구매하고,
     실제 구매내역이 없으면 목요일 마감 전 지정 시각에 다시 구매합니다.
-    예치금 부족이나 실제 구매내역 미확인 시 알림을 보냅니다.
+    예치금 부족이나 실제 구매내역 미확인 시 알림을 보내며,
+    새 당첨번호가 발표되면 구매한 조·번호별 당첨 결과와 당첨금을 알립니다.
   domain: automation
   author: DopingDeveloper
   source_url: https://github.com/DopingDeveloper/ha-component-dh-lottery/blob/master/blueprints/automation/dh_lottery/pension_720_weekly.yaml
@@ -31,6 +32,11 @@ blueprint:
               domain: button
         pension_round_sensor:
           name: 연금복권 720+ 현재 회차 센서
+          selector:
+            entity:
+              domain: sensor
+        pension_winning_sensor:
+          name: 연금복권 720+ 최근 당첨번호 센서
           selector:
             entity:
               domain: sensor
@@ -99,6 +105,7 @@ max_exceeded: silent
 variables:
   deposit_sensor_entity: !input deposit_sensor
   pension_round_sensor_entity: !input pension_round_sensor
+  pension_winning_sensor_entity: !input pension_winning_sensor
   pension_history_entities: !input pension_history_sensors
 
 triggers:
@@ -108,6 +115,10 @@ triggers:
   - trigger: time
     at: !input deadline_retry_time
     id: deadline_retry
+  - trigger: state
+    entity_id: !input pension_winning_sensor
+    attribute: 추첨 회차
+    id: result
 
 conditions: []
 
@@ -310,3 +321,56 @@ actions:
                       - choose:
                           - conditions: []
                             sequence: !input notification_action
+
+      - alias: 새 당첨번호 결과 알림
+        conditions:
+          - condition: trigger
+            id: result
+          - >-
+              {{ trigger.from_state is not none
+                 and trigger.to_state is not none
+                 and trigger.to_state.attributes.get('추첨 회차', 0) | int(0) > 0
+                 and trigger.to_state.attributes.get('추첨 회차', 0) | int(0)
+                   != trigger.from_state.attributes.get('추첨 회차', 0) | int(0) }}
+        sequence:
+          - delay:
+              seconds: !input refresh_wait
+          - variables:
+              notification_title: >-
+                연금복권 720+ {{ state_attr(pension_winning_sensor_entity, '추첨 회차') | int(0) }}회 결과
+              notification_message: >-
+                {% set round_no = state_attr(pension_winning_sensor_entity, '추첨 회차') | int(0) %}
+                {% set draw_date = state_attr(pension_winning_sensor_entity, '추첨일') | default('미확인', true) %}
+                {% set first_number = state_attr(pension_winning_sensor_entity, '1등 번호') | default(states(pension_winning_sensor_entity), true) %}
+                {% set bonus_number = state_attr(pension_winning_sensor_entity, '보너스 번호') | default('미확인', true) %}
+                {% set ns = namespace(lines=[], matched=0, wins=[]) %}
+                {% for entity_id in pension_history_entities %}
+                  {% set ticket_round = state_attr(entity_id, '추첨 회차') | int(0) %}
+                  {% if ticket_round == round_no %}
+                    {% set ns.matched = ns.matched + 1 %}
+                    {% set purchase_number = state_attr(entity_id, '구매 번호') | default('번호 미확인', true) %}
+                    {% set result_text = state_attr(entity_id, '당첨 결과') | default(states(entity_id), true) %}
+                    {% set rank = state_attr(entity_id, '당첨 등수') | default('-', true) %}
+                    {% set prize = state_attr(entity_id, '당첨금') | default('-', true) %}
+                    {% set detail = rank ~ ' · ' ~ prize if rank != '-' else result_text %}
+                    {% set ns.lines = ns.lines + ['• ' ~ purchase_number ~ ' — ' ~ detail] %}
+                    {% if rank != '-' %}
+                      {% set ns.wins = ns.wins + [purchase_number ~ ' ' ~ rank] %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+                연금복권 720+ {{ round_no }}회 결과 ({{ draw_date }})
+                1등 번호: {{ first_number }}
+                보너스 번호: {{ bonus_number }}
+
+                {% if ns.matched > 0 %}
+                내 구매내역:
+                {{ ns.lines | join('\n') }}
+
+                결과: {{ ns.wins | join(', ') if ns.wins | count > 0 else '당첨 없음' }}
+                {% else %}
+                이번 회차와 일치하는 구매내역이 없습니다.
+                {% endif %}
+          - choose:
+              - conditions: []
+                sequence: !input notification_action
