@@ -29,6 +29,11 @@ from .dh_lottery_client import DhLotteryError
 _LOGGER = logging.getLogger(__name__)
 
 EL_BASE_URL = "https://el.dhlottery.co.kr"
+DESKTOP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 class DhPension720Error(DhLotteryError):
@@ -141,7 +146,19 @@ class DhPension720:
     def __init__(self, client):
         self.client = client
         self._jsessionid: Optional[str] = None
+        self._session_cookie_name: Optional[str] = None
         self._game_user_id: Optional[str] = None
+
+    @staticmethod
+    def _select_session_cookie(*cookie_sources) -> tuple[Optional[str], Optional[str]]:
+        """게임 암호화 키인 JSESSIONID를 우선해 선택합니다."""
+        for name in ("JSESSIONID", "DHJSESSIONID"):
+            for cookies in cookie_sources:
+                morsel = cookies.get(name) if cookies else None
+                value = getattr(morsel, "value", None) if morsel else None
+                if value:
+                    return name, value
+        return None, None
 
     # ------------------------------------------------------------------
     # Session helpers - 로또와 동일한 세션 재사용, 게임 서버 세션 확보
@@ -160,22 +177,16 @@ class DhPension720:
 
         entry_url = f"{EL_BASE_URL}/game/TotalGame.jsp?LottoId=LP72"
         game_url = f"{EL_BASE_URL}/game/pension720/game.jsp"
-        cookie_names = ("DHJSESSIONID", "JSESSIONID")
         response_cookies = {}
         page = ""
         try:
-            # 애드온과 동일하게 기존 게임 서버 쿠키를 먼저 재사용합니다.
-            cookies = self.client.session.cookie_jar.filter_cookies(URL(EL_BASE_URL))
-            for name in cookie_names:
-                morsel = cookies.get(name)
-                if morsel and getattr(morsel, "value", None):
-                    self._jsessionid = morsel.value
-                    break
-
             async with self.client.session.get(
                 entry_url,
                 allow_redirects=True,
-                headers={"Referer": "https://www.dhlottery.co.kr/"},
+                headers={
+                    "User-Agent": DESKTOP_USER_AGENT,
+                    "Referer": "https://www.dhlottery.co.kr/",
+                },
             ) as resp:
                 await resp.text()
                 response_cookies.update(resp.cookies)
@@ -183,7 +194,10 @@ class DhPension720:
             async with self.client.session.get(
                 game_url,
                 allow_redirects=True,
-                headers={"Referer": entry_url},
+                headers={
+                    "User-Agent": DESKTOP_USER_AGENT,
+                    "Referer": entry_url,
+                },
             ) as resp:
                 page = await resp.text()
                 response_cookies.update(resp.cookies)
@@ -196,21 +210,14 @@ class DhPension720:
             if user_id_match and user_id_match.group(1):
                 self._game_user_id = user_id_match.group(1)
 
-            # Path 속성 때문에 cookie_jar 필터에서 제외되는 경우를 대비해
-            # 애드온처럼 응답 Set-Cookie도 직접 확인합니다.
-            for name in cookie_names:
-                morsel = response_cookies.get(name)
-                if morsel and getattr(morsel, "value", None):
-                    self._jsessionid = morsel.value
-                    break
-
-            if not self._jsessionid:
-                cookies = self.client.session.cookie_jar.filter_cookies(URL(EL_BASE_URL))
-                for name in cookie_names:
-                    morsel = cookies.get(name)
-                    if morsel and getattr(morsel, "value", None):
-                        self._jsessionid = morsel.value
-                        break
+            # 실제 pension.js 암호화 키는 el 호스트의 JSESSIONID입니다.
+            # 일부 환경에 두 쿠키가 함께 존재하므로 이름 우선순위를 지켜야 합니다.
+            jar_cookies = self.client.session.cookie_jar.filter_cookies(
+                URL(EL_BASE_URL)
+            )
+            self._session_cookie_name, self._jsessionid = (
+                self._select_session_cookie(response_cookies, jar_cookies)
+            )
 
             if (
                 not self._jsessionid
@@ -221,6 +228,7 @@ class DhPension720:
                 )
         except Exception as e:
             self._jsessionid = None
+            self._session_cookie_name = None
             if isinstance(e, DhPension720Error):
                 raise
             raise DhPension720Error(
@@ -245,6 +253,7 @@ class DhPension720:
     def _reset_session(self):
         """세션 리셋 (재시도 시 사용)"""
         self._jsessionid = None
+        self._session_cookie_name = None
         self._game_user_id = None
 
     def _enc(self, form_data: str) -> str:
@@ -407,12 +416,23 @@ class DhPension720:
 
     async def _post_encrypted(self, path: str, plaintext: str) -> dict:
         """게임 서버 암호화 API를 한 번 호출하고 JSON 평문을 반환."""
+        if not self._session_cookie_name or not self._jsessionid:
+            raise DhPension720PurchaseError(
+                f"{path} 게임 세션이 없습니다 — 실결제 전 단계에서 중단되었습니다."
+            )
         body = f"q={self._wire_q(self._enc(plaintext))}"
+        failure_hint = (
+            "구매 내역을 확인하세요."
+            if path == "connPro.do"
+            else "실결제 전 단계에서 중단되었습니다."
+        )
         try:
             resp = await self.client.session.post(
                 f"{EL_BASE_URL}/{path}",
                 data=body,
+                cookies={self._session_cookie_name: self._jsessionid},
                 headers={
+                    "User-Agent": DESKTOP_USER_AGENT,
                     "Origin": EL_BASE_URL,
                     "Referer": f"{EL_BASE_URL}/game/pension720/game.jsp",
                     "X-Requested-With": "XMLHttpRequest",
@@ -422,7 +442,7 @@ class DhPension720:
             payload = await resp.json(content_type=None)
         except Exception as ex:
             raise DhPension720PurchaseError(
-                f"{path} 서버 응답 오류 — 구매 내역을 확인하세요."
+                f"{path} 서버 응답 오류 — {failure_hint}"
             ) from ex
 
         if not isinstance(payload, dict):
@@ -434,7 +454,7 @@ class DhPension720:
                 return self._parse(self._dec(encrypted))
             except Exception as ex:
                 raise DhPension720PurchaseError(
-                    f"{path} 응답 복호화 오류 — 구매 내역을 확인하세요."
+                    f"{path} 응답 복호화 오류 — {failure_hint}"
                 ) from ex
         return payload
 
