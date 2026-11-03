@@ -1,77 +1,169 @@
 # 동행복권: 로또 6/45 + 연금복권 720+
 
-![HACS][hacs-shield]
+![HACS][hacs-shield] ![Version][version-shield]
 
-<img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/showcase.png?raw=true" title="Showcase" alt="Showcase" />
+Home Assistant에서 동행복권 계정의 예치금과 구매 내역을 확인하고, 로또 6/45 및 연금복권 720+를 구매할 수 있는 커스텀 통합 구성요소입니다.
 
-문의 : 네이버 [HomeAssistant카페](https://cafe.naver.com/koreassistant)
+> 복권 구매에는 실제 예치금이 사용됩니다. 구매 버튼과 구매 액션을 자동화에 연결할 때는 오작동이나 중복 실행에 주의하세요.
 
-## 동행복권: 로또 6/45가 도움이 되셨나요?
-| TOSS로 기부하기                                                                                                                                                          | 카카오 페이로 기부하기                                                                                                                                                         |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| <img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/toss-donation.png?raw=true" title="TOSS Donation" alt="TOSS Donation" width="200" /> | <img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/kakao-donation.png?raw=true" title="Kakao Donation" alt="https://qr.kakaopay.com/Ej8KRJWgv" width="200" /> | 
+## 주요 기능
 
-## 준비물
-- HomeAssistant `최신버전`
+- 동행복권 로그인 및 예치금 조회
+- 로또 6/45
+  - 자동·수동·반자동 구매
+  - 최근 구매 번호 및 당첨 결과 조회
+  - 1게임 자동 구매, 5게임 자동 구매 버튼
+- 연금복권 720+
+  - 조별 자동·수동 구매
+  - 서버가 배정한 동일번호로 1~5조 세트 구매
+  - 현재 판매 회차 조회
+  - 최근 구매 5건의 조·번호 및 당첨 결과 조회
+  - 1장 자동 구매, 1~5조 자동 구매, 동일번호 1~5조 구매 버튼
+- 구매 성공·실패 결과를 Home Assistant 지속 알림으로 표시
+- 구매 후 예치금과 구매 내역 자동 갱신
 
+연금복권 구매 내역은 다음처럼 표시됩니다.
 
-## 사용자 구성요소를 HA에 설치하는 방법
-### HACS
-- HACS > Integrations > 우측상단 메뉴 > `Custom repositories` 선택
-- `Add custom repository URL`에 `https://github.com/stkang/ha-component-dh-lottery` 입력
-- Category 는 `Integration` 선택 후 `ADD` 클릭
-- HACS > Integrations 에서 `동행 복권` 찾아서 설치
-- HomeAssistant 재시작
+- 엔티티 이름: `340회 1조 480289 구매/당첨 내역`
+- 상태: `미추첨`, `당첨`, `낙첨` 등
+- 속성: `구매 번호`, `구매일`, `구매 수량`, `구매 금액`, `당첨 결과`
 
-### 수동설치
-- `https://github.com/stkang/ha-component-dh-lottery` 에서 `코드 -> 소스 코드 다운로드(zip)` 을 눌러 파일을 다운로드, 내부의 `dh_lottery` 폴더 확인
-- HomeAssistant 설정폴더 `/config` 내부에 `custom_components` 폴더를 생성(이미 있으면 다음 단계)<br/>설정폴더는 `configuration.yaml` 파일이 있는 폴더를 의미합니다.
-- `/config/custom_components`에 위에서 다운받은 `dh_lottery` 폴더를 넣기
-- HomeAssistant 재시작
+`미추첨`은 구매 실패가 아니라 아직 추첨일이 지나지 않았다는 뜻입니다.
 
-## 동행복권을 설치하기 전 선행과정
-### 동행복권 사이트 회원가입
-- [동행복권](https://dhlottery.co.kr/common.do?method=main) 에서 회원가입
-- 예치금 충전
+## 요구 사항
 
+- 최신 버전의 Home Assistant
+- 동행복권 계정
+- 복권 구매에 사용할 예치금
+- HACS 설치 방식 사용 시 HACS
 
-## 동행복권을 통합구성요소로 설치하는 방법
-### 통합구성요소
-- HomeAssistant 사이드패널 > 설정 > 기기 및 서비스 > 통합 구성요소 추가
-- 검색창에서 `동행 복권` 입력 후 선택
-- 아이디 비밀번호 입력
-- 로또 6/45 및 연금복권 720+ 체크
+## 설치
 
-<img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/config_flow.png?raw=true" title="ConfigFlow" alt="ConfigFlow" />
-<img src="https://github.com/stkang/ha-component-dh-lottery/blob/master/images/service.png?raw=true" title="Service" alt="Service" />
+### HACS 사용자 지정 저장소
+
+1. HACS → **Integrations**로 이동합니다.
+2. 우측 상단 메뉴에서 **Custom repositories**를 선택합니다.
+3. 저장소 주소에 `https://github.com/DopingDeveloper/ha-component-dh-lottery`를 입력합니다.
+4. Category는 **Integration**을 선택한 뒤 저장소를 추가합니다.
+5. HACS에서 **동행 복권**을 찾아 다운로드합니다.
+6. Home Assistant를 재시작합니다.
+
+이미 다른 저장소 주소로 이 통합 구성요소를 설치했다면 기존 통합 등록을 삭제할 필요는 없습니다. HACS에서 기존 사용자 지정 저장소 항목을 제거한 뒤 위 주소를 추가하고, 통합 구성요소를 다시 다운로드한 다음 Home Assistant를 재시작하세요.
+
+### 수동 설치
+
+1. 이 저장소의 **Code → Download ZIP**으로 파일을 내려받습니다.
+2. 압축 파일 안의 `custom_components/dh_lottery` 폴더를 Home Assistant의 `/config/custom_components/dh_lottery`로 복사합니다.
+3. Home Assistant를 재시작합니다.
+
+업데이트할 때도 같은 폴더를 새 버전으로 교체한 뒤 재시작해야 합니다.
+
+## 통합 구성요소 등록
+
+1. Home Assistant → **설정 → 기기 및 서비스**로 이동합니다.
+2. **통합 구성요소 추가**를 누르고 `동행 복권`을 검색합니다.
+3. 동행복권 아이디와 비밀번호를 입력합니다.
+4. 사용할 복권 종류인 **로또 6/45**, **연금복권 720+**를 선택합니다.
+
+등록이 끝나면 예치금 센서와 선택한 복권의 센서·버튼 엔티티가 생성됩니다.
+
+## 생성되는 주요 엔티티
+
+| 구분 | 엔티티/기능 |
+|---|---|
+| 공통 | 예치금, 누적 당첨금액, 새로고침 버튼 |
+| 로또 6/45 | 최근 당첨번호, 최근 구매 게임 1~5, 1게임 자동 구매, 모두 자동 구매 |
+| 연금복권 720+ | 현재 회차, 최근 구매/당첨 내역 1~5, 1장 자동 구매, 1~5조 자동 구매, 동일번호 1~5조 구매 |
+
+실제 엔티티 ID에는 동행복권 아이디가 포함됩니다. 예: `sensor.dh_아이디_deposit`
+
+## 액션 사용법
+
+Home Assistant의 **개발자 도구 → 액션**에서 아래 액션을 실행할 수 있습니다. 구매 액션은 응답을 반환하므로 자동화나 스크립트 YAML에서 호출할 때 `response_variable`을 지정합니다.
+
+### 정보 새로고침
 
 ```yaml
-# 예치금 및 복권 구매내역 수동 갠신
-service: dh_lottery.refresh_lottery
+action: dh_lottery.refresh_lottery
 data: {}
+```
 
----
+### 로또 6/45 구매
 
-# 복권 구매
-service: dh_lottery.buy_lotto_645
+```yaml
+action: dh_lottery.buy_lotto_645
 data:
+  entity_id: sensor.dh_아이디_deposit
   game_1: 자동
-  game_2: 수동, 13, 44, 42, 16, 42, 1
+  game_2: 수동, 1, 13, 16, 22, 42, 44
   game_3: 반자동, 3, 4, 5
   game_4: 자동
+response_variable: lotto_purchase
+```
 
----
+- 자동: `자동`
+- 수동: `수동, 번호1, 번호2, 번호3, 번호4, 번호5, 번호6`
+- 반자동: `반자동, 고정번호1, 고정번호2, ...`
+- 한 번에 최대 5게임까지 입력할 수 있습니다.
 
-# 연금복권 720+ 구매
-# 자동: "자동, 조", 수동: "수동, 조, 6자리번호"
-# 통합 구성요소에는 1장 자동, 1~5조 자동, 동일번호 1~5조 구매 버튼도 생성됩니다.
-service: dh_lottery.buy_pension_720
+### 연금복권 720+ 조별 구매
+
+```yaml
+action: dh_lottery.buy_pension_720
 data:
   entity_id: sensor.dh_아이디_deposit
   ticket_1: 자동, 1
   ticket_2: 수동, 2, 123456
-
+response_variable: pension_purchase
 ```
 
+- 자동: `자동, 조`
+- 수동: `수동, 조, 6자리번호`
+- 조는 `1`~`5`, 번호는 앞의 0을 포함한 6자리로 입력합니다.
+- 한 번에 최대 5장까지 입력할 수 있습니다.
+
+### 연금복권 동일번호 1~5조 구매
+
+```yaml
+action: dh_lottery.buy_pension_720
+data:
+  entity_id: sensor.dh_아이디_deposit
+  ticket_1: 동일번호자동
+response_variable: pension_purchase
+```
+
+`동일번호자동`은 다른 티켓 항목과 함께 사용할 수 없습니다. 동행복권 서버가 하나의 번호를 배정하고 그 번호를 1~5조에 각각 구매하므로 총 5,000원이 사용됩니다.
+
+## 구매 시 주의사항
+
+- 버튼을 한 번 누르면 실제 구매가 진행되고 예치금이 차감됩니다.
+- 연금복권 번호가 이미 판매됐거나 구매할 수 없는 경우 해당 번호 구매는 실패합니다.
+- 구매 요청 후 `결과가 불명확합니다`라는 메시지가 나오면 **즉시 다시 실행하지 마세요.** 동행복권 웹사이트의 구매 내역에서 실제 구매 여부를 먼저 확인해야 중복 구매를 방지할 수 있습니다.
+- 구매 성공 알림에는 회차, 구매 수량, 구매 금액과 실제 구매 번호가 표시됩니다.
+- 구매 직후 센서가 갱신되지 않으면 `새로고침` 버튼을 한 번 누르거나 `dh_lottery.refresh_lottery` 액션을 실행하세요.
+- 동행복권 사이트 점검 시간, 판매 마감 시간 또는 사이트 API 변경으로 구매·조회가 일시적으로 실패할 수 있습니다.
+
+## 업데이트
+
+HACS에서 새 버전을 다시 다운로드한 후 Home Assistant를 재시작합니다. 브라우저 새로고침만으로는 Python 통합 구성요소의 새 코드가 적용되지 않습니다.
+
+현재 통합 구성요소 버전은 [`custom_components/dh_lottery/manifest.json`](custom_components/dh_lottery/manifest.json)에서 확인할 수 있습니다.
+
+## 문제 해결
+
+문제가 발생하면 다음 정보를 함께 확인하세요.
+
+- 설치된 통합 구성요소 버전
+- Home Assistant 로그의 `custom_components.dh_lottery` 오류
+- 실행한 버튼 또는 액션 종류
+- 구매 실패 알림의 오류 코드와 메시지
+- 동행복권 웹사이트 구매 내역의 실제 처리 결과
+
+아이디, 비밀번호, 세션 쿠키 등 민감한 정보는 이슈나 로그에 공개하지 마세요.
+
+## 출처
+
+이 저장소는 [stkang/ha-component-dh-lottery](https://github.com/stkang/ha-component-dh-lottery)를 기반으로 로또 6/45와 연금복권 720+ 기능을 확장한 포크입니다.
 
 [hacs-shield]: https://img.shields.io/badge/HACS-Custom-red.svg
+[version-shield]: https://img.shields.io/badge/version-0.3.3-blue.svg
