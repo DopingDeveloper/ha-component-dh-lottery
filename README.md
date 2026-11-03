@@ -93,6 +93,30 @@ Home Assistant에서 동행복권 계정의 예치금과 구매 내역을 확인
 
 > 화면 예시의 로또 구매 번호는 개인정보 보호를 위해 삭제했습니다.
 
+## 자동 구매 블루프린트
+
+통합 구성요소를 등록한 뒤 아래 블루프린트를 가져오면 별도의 구매완료 헬퍼 없이 주간 자동 구매를 구성할 수 있습니다. 블루프린트는 버튼 실행 여부가 아니라 실제 구매내역 센서를 확인해 중복 구매를 방지합니다.
+
+### 로또 6/45
+
+[![로또 6/45 블루프린트 가져오기](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FDopingDeveloper%2Fha-component-dh-lottery%2Fblob%2Fmaster%2Fblueprints%2Fautomation%2Fdh_lottery%2Flotto_645_weekly.yaml)
+
+- 월요일 최초 구매와 같은 날 재시도 시각을 각각 설정합니다.
+- 예치금이 5,000원 미만이면 충전 요청 알림을 보냅니다.
+- 구매 후 다음 회차 5게임이 실제 구매내역에 없으면 실패로 알립니다.
+- 새 당첨번호가 발표되면 내 5게임의 당첨 결과를 알립니다.
+
+### 연금복권 720+
+
+[![연금복권 720+ 블루프린트 가져오기](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FDopingDeveloper%2Fha-component-dh-lottery%2Fblob%2Fmaster%2Fblueprints%2Fautomation%2Fdh_lottery%2Fpension_720_weekly.yaml)
+
+- 월요일에 동일번호 1~5조 구매를 시도합니다.
+- 실제 구매내역에서 현재 회차의 1~5조가 같은 번호인지 확인합니다.
+- 구매되지 않았으면 목요일 마감 전 지정 시각에 최종 재시도합니다.
+- 예치금 부족 또는 실제 구매내역 미확인 시 알림을 보냅니다.
+
+두 블루프린트 모두 `최근 구매/당첨 내역 1`~`5` 센서를 빠짐없이 선택해야 합니다. 알림 동작의 기본값은 Home Assistant 지속 알림이며, Slack이나 모바일 앱 알림으로 바꿀 때는 `notification_title`과 `notification_message` 변수를 사용하세요.
+
 ## 액션 사용법
 
 Home Assistant의 **개발자 도구 → 액션**에서 아래 액션을 실행할 수 있습니다. 구매 액션은 응답을 반환하므로 자동화나 스크립트 YAML에서 호출할 때 `response_variable`을 지정합니다.

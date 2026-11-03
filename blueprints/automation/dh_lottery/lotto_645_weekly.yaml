@@ -1,0 +1,331 @@
+blueprint:
+  name: 동행복권 로또 6/45 주간 자동 구매 및 결과 알림
+  description: >-
+    동행복권 통합의 로또 6/45를 월요일에 5게임 자동 구매하고,
+    예치금 부족 또는 실제 구매내역 미확인 시 알림을 보냅니다.
+    지정한 재시도 시각에 다시 구매하며 새 당첨번호가 발표되면
+    내 구매번호와 결과를 알립니다.
+  domain: automation
+  author: DopingDeveloper
+  source_url: https://github.com/DopingDeveloper/ha-component-dh-lottery/blob/master/blueprints/automation/dh_lottery/lotto_645_weekly.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    entities:
+      name: 동행복권 엔티티
+      icon: mdi:ticket-confirmation
+      input:
+        refresh_button:
+          name: 새로고침 버튼
+          selector:
+            entity:
+              domain: button
+        deposit_sensor:
+          name: 예치금 센서
+          selector:
+            entity:
+              domain: sensor
+        lotto_buy_button:
+          name: 로또 6/45 5게임 자동 구매 버튼
+          selector:
+            entity:
+              domain: button
+        lotto_winning_sensor:
+          name: 로또 6/45 당첨번호 센서
+          selector:
+            entity:
+              domain: sensor
+        lotto_history_sensors:
+          name: 로또 6/45 구매내역 센서 5개
+          description: 최근 구매/당첨 내역 1~5 센서를 모두 선택하세요.
+          selector:
+            entity:
+              domain: sensor
+              multiple: true
+    schedule:
+      name: 실행 시각
+      icon: mdi:clock-outline
+      input:
+        primary_time:
+          name: 월요일 최초 구매 시각
+          default: "09:00:00"
+          selector:
+            time: {}
+        retry_time:
+          name: 월요일 재시도 시각
+          default: "17:00:00"
+          selector:
+            time: {}
+        refresh_wait:
+          name: 새로고침 반영 대기
+          description: 동행복권 센서가 갱신될 때까지 기다리는 초입니다.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 120
+              step: 5
+              unit_of_measurement: 초
+              mode: box
+        purchase_wait:
+          name: 구매내역 반영 대기
+          default: 60
+          selector:
+            number:
+              min: 15
+              max: 300
+              step: 15
+              unit_of_measurement: 초
+              mode: box
+    notifications:
+      name: 알림
+      icon: mdi:bell-outline
+      input:
+        notification_action:
+          name: 알림 동작
+          description: >-
+            notification_title과 notification_message 변수를 사용하는
+            Slack, 모바일 앱 등의 알림 동작을 지정할 수 있습니다.
+          default:
+            - action: persistent_notification.create
+              data:
+                title: "{{ notification_title }}"
+                message: "{{ notification_message }}"
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  deposit_sensor_entity: !input deposit_sensor
+  lotto_winning_sensor_entity: !input lotto_winning_sensor
+  lotto_history_entities: !input lotto_history_sensors
+
+triggers:
+  - trigger: time
+    at: !input primary_time
+    id: primary
+  - trigger: time
+    at: !input retry_time
+    id: retry
+  - trigger: state
+    entity_id: !input lotto_winning_sensor
+    id: result
+
+conditions: []
+
+actions:
+  - choose:
+      - alias: 월요일 최초 구매
+        conditions:
+          - condition: trigger
+            id: primary
+          - condition: time
+            weekday: [mon]
+        sequence:
+          - action: button.press
+            target:
+              entity_id: !input refresh_button
+          - delay:
+              seconds: !input refresh_wait
+          - if:
+              - >-
+                {% set win_round = state_attr(lotto_winning_sensor_entity, '추첨 회차') | int(0) %}
+                {% set ns = namespace(rounds=[]) %}
+                {% for entity_id in lotto_history_entities %}
+                  {% set ticket_round = state_attr(entity_id, '추첨 회차') | int(0) %}
+                  {% if has_value(entity_id) and ticket_round > win_round %}
+                    {% set ns.rounds = ns.rounds + [ticket_round] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.rounds | count < 5 or ns.rounds | unique | list | count != 1 }}
+            then:
+              - choose:
+                  - alias: 예치금이 충분하면 구매
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        above: 4999
+                    sequence:
+                      - action: button.press
+                        target:
+                          entity_id: !input lotto_buy_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input purchase_wait
+                      - action: button.press
+                        target:
+                          entity_id: !input refresh_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input refresh_wait
+                      - if:
+                          - >-
+                              {% set win_round = state_attr(lotto_winning_sensor_entity, '추첨 회차') | int(0) %}
+                              {% set ns = namespace(rounds=[]) %}
+                              {% for entity_id in lotto_history_entities %}
+                                {% set ticket_round = state_attr(entity_id, '추첨 회차') | int(0) %}
+                                {% if has_value(entity_id) and ticket_round > win_round %}
+                                  {% set ns.rounds = ns.rounds + [ticket_round] %}
+                                {% endif %}
+                              {% endfor %}
+                              {{ ns.rounds | count < 5 or ns.rounds | unique | list | count != 1 }}
+                        then:
+                          - variables:
+                              notification_title: 로또 6/45 구매 실패
+                              notification_message: >-
+                                월요일 최초 구매를 요청했지만 다음 회차 5게임이
+                                실제 구매내역에서 확인되지 않았습니다.
+                                현재 예치금: {{ states(deposit_sensor_entity) }}원.
+                                재시도 시각에 다시 구매합니다.
+                          - choose:
+                              - conditions: []
+                                sequence: !input notification_action
+                  - alias: 예치금이 부족하면 알림
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        below: 5000
+                    sequence:
+                      - variables:
+                          notification_title: 로또 6/45 예치금 부족
+                          notification_message: >-
+                            월요일 최초 구매 시각의 예치금이
+                            {{ states(deposit_sensor_entity) }}원입니다.
+                            재시도 전까지 최소 5,000원을 충전해 주세요.
+                      - choose:
+                          - conditions: []
+                            sequence: !input notification_action
+
+      - alias: 월요일 재시도
+        conditions:
+          - condition: trigger
+            id: retry
+          - condition: time
+            weekday: [mon]
+        sequence:
+          - action: button.press
+            target:
+              entity_id: !input refresh_button
+          - delay:
+              seconds: !input refresh_wait
+          - if:
+              - >-
+                {% set win_round = state_attr(lotto_winning_sensor_entity, '추첨 회차') | int(0) %}
+                {% set ns = namespace(rounds=[]) %}
+                {% for entity_id in lotto_history_entities %}
+                  {% set ticket_round = state_attr(entity_id, '추첨 회차') | int(0) %}
+                  {% if has_value(entity_id) and ticket_round > win_round %}
+                    {% set ns.rounds = ns.rounds + [ticket_round] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.rounds | count < 5 or ns.rounds | unique | list | count != 1 }}
+            then:
+              - choose:
+                  - alias: 충전되었으면 재구매
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        above: 4999
+                    sequence:
+                      - action: button.press
+                        target:
+                          entity_id: !input lotto_buy_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input purchase_wait
+                      - action: button.press
+                        target:
+                          entity_id: !input refresh_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input refresh_wait
+                      - if:
+                          - >-
+                              {% set win_round = state_attr(lotto_winning_sensor_entity, '추첨 회차') | int(0) %}
+                              {% set ns = namespace(rounds=[]) %}
+                              {% for entity_id in lotto_history_entities %}
+                                {% set ticket_round = state_attr(entity_id, '추첨 회차') | int(0) %}
+                                {% if has_value(entity_id) and ticket_round > win_round %}
+                                  {% set ns.rounds = ns.rounds + [ticket_round] %}
+                                {% endif %}
+                              {% endfor %}
+                              {{ ns.rounds | count < 5 or ns.rounds | unique | list | count != 1 }}
+                        then:
+                          - variables:
+                              notification_title: 로또 6/45 최종 구매 실패
+                              notification_message: >-
+                                월요일 재구매 후에도 다음 회차 5게임이 확인되지 않았습니다.
+                                동행복권 연동 상태와 구매내역을 확인해 주세요.
+                                현재 예치금: {{ states(deposit_sensor_entity) }}원.
+                          - choose:
+                              - conditions: []
+                                sequence: !input notification_action
+                  - alias: 재시도 시각에도 예치금 부족
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        below: 5000
+                    sequence:
+                      - variables:
+                          notification_title: 로또 6/45 최종 예치금 부족
+                          notification_message: >-
+                            월요일 재시도 시각에도 예치금이
+                            {{ states(deposit_sensor_entity) }}원이라 구매하지 못했습니다.
+                      - choose:
+                          - conditions: []
+                            sequence: !input notification_action
+
+      - alias: 새 당첨번호 결과 알림
+        conditions:
+          - condition: trigger
+            id: result
+          - >-
+              {{ trigger.from_state is not none
+                 and trigger.to_state is not none
+                 and trigger.to_state.state not in ['unknown', 'unavailable', '']
+                 and trigger.to_state.state != trigger.from_state.state }}
+        sequence:
+          - delay:
+              seconds: !input purchase_wait
+          - action: button.press
+            target:
+              entity_id: !input refresh_button
+            continue_on_error: true
+          - delay:
+              seconds: !input refresh_wait
+          - variables:
+              notification_title: >-
+                로또 6/45 {{ state_attr(lotto_winning_sensor_entity, '추첨 회차') | int(0) }}회 결과
+              notification_message: >-
+                {% set round_no = state_attr(lotto_winning_sensor_entity, '추첨 회차') | int(0) %}
+                {% set draw_date = state_attr(lotto_winning_sensor_entity, '추첨일') | default('미확인', true) %}
+                {% set ns = namespace(lines=[], matched=0, wins=[]) %}
+                {% for entity_id in lotto_history_entities %}
+                  {% set ticket_round = state_attr(entity_id, '추첨 회차') | int(0) %}
+                  {% if ticket_round == round_no %}
+                    {% set ns.matched = ns.matched + 1 %}
+                    {% set slot = state_attr(entity_id, '슬롯') | default(loop.index, true) %}
+                    {% set rank = state_attr(entity_id, '순위') | int(0) %}
+                    {% set result_text = (rank ~ '등 당첨') if rank > 0 else '낙첨' %}
+                    {% set ns.lines = ns.lines + ['• ' ~ slot ~ ': ' ~ states(entity_id) ~ ' — ' ~ result_text] %}
+                    {% if rank > 0 %}
+                      {% set ns.wins = ns.wins + [slot ~ ' ' ~ rank ~ '등'] %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+                로또 6/45 {{ round_no }}회 결과 ({{ draw_date }})
+                당첨번호: {{ states(lotto_winning_sensor_entity) }}
+
+                {% if ns.matched > 0 %}
+                내 구매번호:
+                {{ ns.lines | join('\n') }}
+
+                결과: {{ ns.wins | join(', ') if ns.wins | count > 0 else '당첨 없음' }}
+                {% else %}
+                이번 회차와 일치하는 구매내역이 없습니다.
+                {% endif %}
+          - choose:
+              - conditions: []
+                sequence: !input notification_action

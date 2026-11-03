@@ -1,0 +1,312 @@
+blueprint:
+  name: 동행복권 연금복권 720+ 동일번호 주간 자동 구매
+  description: >-
+    동행복권 통합의 연금복권 720+ 동일번호 1~5조를 월요일에 구매하고,
+    실제 구매내역이 없으면 목요일 마감 전 지정 시각에 다시 구매합니다.
+    예치금 부족이나 실제 구매내역 미확인 시 알림을 보냅니다.
+  domain: automation
+  author: DopingDeveloper
+  source_url: https://github.com/DopingDeveloper/ha-component-dh-lottery/blob/master/blueprints/automation/dh_lottery/pension_720_weekly.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    entities:
+      name: 동행복권 엔티티
+      icon: mdi:ticket-confirmation
+      input:
+        refresh_button:
+          name: 새로고침 버튼
+          selector:
+            entity:
+              domain: button
+        deposit_sensor:
+          name: 예치금 센서
+          selector:
+            entity:
+              domain: sensor
+        pension_buy_button:
+          name: 동일번호 1~5조 구매 버튼
+          selector:
+            entity:
+              domain: button
+        pension_round_sensor:
+          name: 연금복권 720+ 현재 회차 센서
+          selector:
+            entity:
+              domain: sensor
+        pension_history_sensors:
+          name: 연금복권 720+ 구매내역 센서 5개
+          description: 최근 구매/당첨 내역 1~5 센서를 모두 선택하세요.
+          selector:
+            entity:
+              domain: sensor
+              multiple: true
+    schedule:
+      name: 실행 시각
+      icon: mdi:clock-outline
+      input:
+        primary_time:
+          name: 월요일 최초 구매 시각
+          default: "09:00:00"
+          selector:
+            time: {}
+        deadline_retry_time:
+          name: 목요일 마감 전 최종 재시도 시각
+          default: "14:00:00"
+          selector:
+            time: {}
+        refresh_wait:
+          name: 새로고침 반영 대기
+          description: 동행복권 센서가 갱신될 때까지 기다리는 초입니다.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 120
+              step: 5
+              unit_of_measurement: 초
+              mode: box
+        purchase_wait:
+          name: 구매내역 반영 대기
+          default: 60
+          selector:
+            number:
+              min: 15
+              max: 300
+              step: 15
+              unit_of_measurement: 초
+              mode: box
+    notifications:
+      name: 알림
+      icon: mdi:bell-outline
+      input:
+        notification_action:
+          name: 알림 동작
+          description: >-
+            notification_title과 notification_message 변수를 사용하는
+            Slack, 모바일 앱 등의 알림 동작을 지정할 수 있습니다.
+          default:
+            - action: persistent_notification.create
+              data:
+                title: "{{ notification_title }}"
+                message: "{{ notification_message }}"
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  deposit_sensor_entity: !input deposit_sensor
+  pension_round_sensor_entity: !input pension_round_sensor
+  pension_history_entities: !input pension_history_sensors
+
+triggers:
+  - trigger: time
+    at: !input primary_time
+    id: primary
+  - trigger: time
+    at: !input deadline_retry_time
+    id: deadline_retry
+
+conditions: []
+
+actions:
+  - choose:
+      - alias: 월요일 최초 구매
+        conditions:
+          - condition: trigger
+            id: primary
+          - condition: time
+            weekday: [mon]
+        sequence:
+          - action: button.press
+            target:
+              entity_id: !input refresh_button
+          - delay:
+              seconds: !input refresh_wait
+          - if:
+              - >-
+                  {% set current_round = states(pension_round_sensor_entity) | int(0) %}
+                  {% set ns = namespace(groups=[], numbers=[]) %}
+                  {% for entity_id in pension_history_entities %}
+                    {% set barcode = state_attr(entity_id, '바코드') | default('', true) | string %}
+                    {% set parts = barcode.split(':') %}
+                    {% if current_round > 0
+                          and has_value(entity_id)
+                          and state_attr(entity_id, '추첨 회차') | int(0) == current_round
+                          and state_attr(entity_id, '구매 수량') | int(0) >= 1
+                          and parts | count == 2
+                          and parts[0] | int(0) in [1, 2, 3, 4, 5]
+                          and parts[1] | length == 6 %}
+                      {% set ns.groups = ns.groups + [parts[0] | int] %}
+                      {% set ns.numbers = ns.numbers + [parts[1]] %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.groups | sort != [1, 2, 3, 4, 5]
+                     or ns.numbers | unique | list | count != 1 }}
+            then:
+              - choose:
+                  - alias: 예치금이 충분하면 동일번호 구매
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        above: 4999
+                    sequence:
+                      - action: button.press
+                        target:
+                          entity_id: !input pension_buy_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input purchase_wait
+                      - action: button.press
+                        target:
+                          entity_id: !input refresh_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input refresh_wait
+                      - if:
+                          - >-
+                              {% set current_round = states(pension_round_sensor_entity) | int(0) %}
+                              {% set ns = namespace(groups=[], numbers=[]) %}
+                              {% for entity_id in pension_history_entities %}
+                                {% set barcode = state_attr(entity_id, '바코드') | default('', true) | string %}
+                                {% set parts = barcode.split(':') %}
+                                {% if current_round > 0
+                                      and has_value(entity_id)
+                                      and state_attr(entity_id, '추첨 회차') | int(0) == current_round
+                                      and state_attr(entity_id, '구매 수량') | int(0) >= 1
+                                      and parts | count == 2
+                                      and parts[0] | int(0) in [1, 2, 3, 4, 5]
+                                      and parts[1] | length == 6 %}
+                                  {% set ns.groups = ns.groups + [parts[0] | int] %}
+                                  {% set ns.numbers = ns.numbers + [parts[1]] %}
+                                {% endif %}
+                              {% endfor %}
+                              {{ ns.groups | sort != [1, 2, 3, 4, 5]
+                                 or ns.numbers | unique | list | count != 1 }}
+                        then:
+                          - variables:
+                              notification_title: 연금복권 720+ 구매 실패
+                              notification_message: >-
+                                월요일에 동일번호 1~5조 구매를 요청했지만
+                                현재 회차의 실제 구매내역에서 확인되지 않았습니다.
+                                현재 예치금: {{ states(deposit_sensor_entity) }}원.
+                                목요일 마감 전 지정 시각에 다시 구매합니다.
+                          - choose:
+                              - conditions: []
+                                sequence: !input notification_action
+                  - alias: 예치금이 부족하면 알림
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        below: 5000
+                    sequence:
+                      - variables:
+                          notification_title: 연금복권 720+ 예치금 부족
+                          notification_message: >-
+                            월요일 최초 구매 시각의 예치금이
+                            {{ states(deposit_sensor_entity) }}원입니다.
+                            목요일 최종 재시도 전까지 최소 5,000원을 충전해 주세요.
+                      - choose:
+                          - conditions: []
+                            sequence: !input notification_action
+
+      - alias: 목요일 마감 전 최종 재시도
+        conditions:
+          - condition: trigger
+            id: deadline_retry
+          - condition: time
+            weekday: [thu]
+        sequence:
+          - action: button.press
+            target:
+              entity_id: !input refresh_button
+          - delay:
+              seconds: !input refresh_wait
+          - if:
+              - >-
+                  {% set current_round = states(pension_round_sensor_entity) | int(0) %}
+                  {% set ns = namespace(groups=[], numbers=[]) %}
+                  {% for entity_id in pension_history_entities %}
+                    {% set barcode = state_attr(entity_id, '바코드') | default('', true) | string %}
+                    {% set parts = barcode.split(':') %}
+                    {% if current_round > 0
+                          and has_value(entity_id)
+                          and state_attr(entity_id, '추첨 회차') | int(0) == current_round
+                          and state_attr(entity_id, '구매 수량') | int(0) >= 1
+                          and parts | count == 2
+                          and parts[0] | int(0) in [1, 2, 3, 4, 5]
+                          and parts[1] | length == 6 %}
+                      {% set ns.groups = ns.groups + [parts[0] | int] %}
+                      {% set ns.numbers = ns.numbers + [parts[1]] %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ ns.groups | sort != [1, 2, 3, 4, 5]
+                     or ns.numbers | unique | list | count != 1 }}
+            then:
+              - choose:
+                  - alias: 충전되었으면 최종 구매
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        above: 4999
+                    sequence:
+                      - action: button.press
+                        target:
+                          entity_id: !input pension_buy_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input purchase_wait
+                      - action: button.press
+                        target:
+                          entity_id: !input refresh_button
+                        continue_on_error: true
+                      - delay:
+                          seconds: !input refresh_wait
+                      - if:
+                          - >-
+                              {% set current_round = states(pension_round_sensor_entity) | int(0) %}
+                              {% set ns = namespace(groups=[], numbers=[]) %}
+                              {% for entity_id in pension_history_entities %}
+                                {% set barcode = state_attr(entity_id, '바코드') | default('', true) | string %}
+                                {% set parts = barcode.split(':') %}
+                                {% if current_round > 0
+                                      and has_value(entity_id)
+                                      and state_attr(entity_id, '추첨 회차') | int(0) == current_round
+                                      and state_attr(entity_id, '구매 수량') | int(0) >= 1
+                                      and parts | count == 2
+                                      and parts[0] | int(0) in [1, 2, 3, 4, 5]
+                                      and parts[1] | length == 6 %}
+                                  {% set ns.groups = ns.groups + [parts[0] | int] %}
+                                  {% set ns.numbers = ns.numbers + [parts[1]] %}
+                                {% endif %}
+                              {% endfor %}
+                              {{ ns.groups | sort != [1, 2, 3, 4, 5]
+                                 or ns.numbers | unique | list | count != 1 }}
+                        then:
+                          - variables:
+                              notification_title: 연금복권 720+ 최종 구매 실패
+                              notification_message: >-
+                                목요일 최종 구매 후에도 현재 회차의 동일번호
+                                1~5조 구매내역이 확인되지 않았습니다.
+                                온라인 구매 마감 전에 직접 확인해 주세요.
+                                현재 예치금: {{ states(deposit_sensor_entity) }}원.
+                          - choose:
+                              - conditions: []
+                                sequence: !input notification_action
+                  - alias: 최종 시각에도 예치금 부족
+                    conditions:
+                      - condition: numeric_state
+                        entity_id: !input deposit_sensor
+                        below: 5000
+                    sequence:
+                      - variables:
+                          notification_title: 연금복권 720+ 구매 마감 임박
+                          notification_message: >-
+                            목요일 최종 재시도 시각에도 예치금이
+                            {{ states(deposit_sensor_entity) }}원이라 구매하지 못했습니다.
+                            온라인 구매 마감 전에 직접 확인해 주세요.
+                      - choose:
+                          - conditions: []
+                            sequence: !input notification_action
