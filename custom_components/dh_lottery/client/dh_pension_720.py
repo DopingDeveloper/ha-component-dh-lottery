@@ -458,6 +458,20 @@ class DhPension720:
                 ) from ex
         return payload
 
+    async def _post_pre_payment(self, path: str, plaintext: str) -> dict:
+        """무결제 단계의 세션 오류는 새 세션으로 한 번만 재시도합니다."""
+        try:
+            return await self._post_encrypted(path, plaintext)
+        except DhPension720PurchaseError:
+            _LOGGER.warning(
+                "[PENSION720] %s 세션 오류로 게임 세션을 한 번 갱신합니다.",
+                path,
+            )
+            self._reset_session()
+            await self.client.async_login()
+            await self._ensure_session()
+            return await self._post_encrypted(path, plaintext)
+
     @staticmethod
     def _require_success(result: dict, step: str) -> None:
         code = str(result.get("resultCode", ""))
@@ -478,7 +492,7 @@ class DhPension720:
             ("BUY_TYPE", "A"),
             ("ACCS_TYPE", "01"),
         ])
-        result = await self._post_encrypted("makeAutoNo.do", request)
+        result = await self._post_pre_payment("makeAutoNo.do", request)
         self._require_success(result, "자동번호 배정")
         assigned_group = str(result.get("selClsNo", group)).split(",")[0]
         assigned_number = str(result.get("selLotNo", "")).split(",")[0]
@@ -498,7 +512,7 @@ class DhPension720:
             ("BUY_TYPE", "M"),
             ("ACCS_TYPE", "01"),
         ])
-        result = await self._post_encrypted("checkVerifyNo.do", request)
+        result = await self._post_pre_payment("checkVerifyNo.do", request)
         self._require_success(result, "수동번호 확인")
         tokens = str(result.get("resultMsg", "")).split("/")
         verify_yn = tokens[1].strip() if len(tokens) > 1 else str(result.get("verifyYn", ""))
@@ -628,7 +642,7 @@ class DhPension720:
             ("BUY_TYPE", "A"),
             ("ACCS_TYPE", "01"),
         ])
-        assigned = await self._post_encrypted("makeAutoNo.do", assign_request)
+        assigned = await self._post_pre_payment("makeAutoNo.do", assign_request)
         self._require_success(assigned, "동일번호 배정")
         number_text = str(assigned.get("selLotNo", "")).split(",")[0]
         if not number_text.isdigit() or len(number_text) != 6:
