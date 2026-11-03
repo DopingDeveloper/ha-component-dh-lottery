@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from yarl import URL
 
-from .dh_lottery_client import DhLotteryError
+from .dh_lottery_client import DH_LOTTERY_URL, DhLotteryError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,14 +83,49 @@ class DhPension720BuyHistoryData:
     ticket_count: int
     amount: int
     result: str
+    rank: str = ""
+    prize: int = 0
+    winning_number: str = ""
+    bonus_number: str = ""
+
+    @property
+    def purchase_parts(self) -> Optional[tuple[int, str]]:
+        """구매 이력의 조와 6자리 번호를 반환합니다."""
+        match = re.fullmatch(r"\s*([1-5])\s*[:조]\s*(\d{1,6})\s*", self.barcode)
+        if not match:
+            return None
+        return int(match.group(1)), f"{int(match.group(2)):06d}"
 
     @property
     def purchase_number(self) -> str:
         """구매 이력의 gmInfo를 사람이 읽기 좋은 조/번호로 변환합니다."""
-        match = re.fullmatch(r"\s*([1-5])\s*[:조]\s*(\d{1,6})\s*", self.barcode)
-        if not match:
+        if not (parts := self.purchase_parts):
             return self.barcode
-        return f"{match.group(1)}조 {int(match.group(2)):06d}"
+        return f"{parts[0]}조 {parts[1]}"
+
+    @property
+    def prize_description(self) -> str:
+        """등수에 맞는 당첨금 안내를 반환합니다."""
+        if self.rank == "1등":
+            return "월 700만원 × 20년"
+        if self.rank in {"2등", "보너스"}:
+            return "월 100만원 × 10년"
+        return f"{self.prize:,}원" if self.prize else "-"
+
+
+@dataclass(frozen=True)
+class DhPension720WinningData:
+    """연금복권 720+ 회차별 당첨번호입니다."""
+
+    round_no: int
+    group: int
+    number: str
+    bonus_number: str
+    draw_date: str
+
+    @property
+    def display_number(self) -> str:
+        return f"{self.group}조 {self.number}"
 
 
 # ---------------------------------------------------------------------------
@@ -813,24 +848,125 @@ class DhPension720:
         )
 
     # ------------------------------------------------------------------
-    # History (www.dhlottery.co.kr 경유 - 로또와 동일한 API)
+    # Winning numbers and history (www.dhlottery.co.kr)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _rank_for(
+        group: int, number: str, winning: DhPension720WinningData
+    ) -> tuple[str, int]:
+        """구매번호 한 장의 등수와 일시 당첨금을 계산합니다."""
+        if number == winning.number:
+            return ("1등", 0) if group == winning.group else ("2등", 0)
+        if number == winning.bonus_number:
+            return "보너스", 0
+
+        prizes = {5: 1_000_000, 4: 100_000, 3: 50_000, 2: 5_000, 1: 1_000}
+        ranks = {5: "3등", 4: "4등", 3: "5등", 2: "6등", 1: "7등"}
+        for digits in range(5, 0, -1):
+            if number[-digits:] == winning.number[-digits:]:
+                return ranks[digits], prizes[digits]
+        return "", 0
+
+    @staticmethod
+    def _parse_winning_item(item: dict) -> DhPension720WinningData:
+        """공개 API의 당첨번호 한 회차를 검증해 변환합니다."""
+        round_no = int(item["psltEpsd"])
+        group = int(item["wnBndNo"])
+        number = str(item["wnRnkVl"]).zfill(6)
+        bonus = str(item["bnsRnkVl"]).zfill(6)
+        if round_no < 1 or group not in range(1, 6):
+            raise ValueError("회차 또는 조 범위 오류")
+        if not re.fullmatch(r"\d{6}", number) or not re.fullmatch(r"\d{6}", bonus):
+            raise ValueError("당첨번호 형식 오류")
+        if number == bonus:
+            raise ValueError("1등 번호와 보너스 번호가 같습니다")
+
+        raw_date = str(item.get("psltRflYmd", ""))
+        draw_date = (
+            f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+            if re.fullmatch(r"\d{8}", raw_date)
+            else raw_date
+        )
+        return DhPension720WinningData(
+            round_no=round_no,
+            group=group,
+            number=number,
+            bonus_number=bonus,
+            draw_date=draw_date,
+        )
+
+    async def async_get_winning_numbers(self) -> List[DhPension720WinningData]:
+        """공개 API에서 연금복권 전 회차 당첨번호를 최신순으로 조회합니다."""
+        try:
+            async with self.client.session.get(
+                DH_LOTTERY_URL, allow_redirects=True
+            ) as resp:
+                await resp.read()
+            data = await self.client.async_get(
+                "pt720/selectPstPt720WnList.do", params={}
+            )
+            items = data.get("result", []) if isinstance(data, dict) else []
+            results = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    results.append(self._parse_winning_item(item))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            return sorted(results, key=lambda item: item.round_no, reverse=True)
+        except Exception as ex:
+            _LOGGER.warning("연금복권 당첨번호 조회 실패: %s", ex)
+            return []
+
+    @classmethod
+    def resolve_buy_history(
+        cls,
+        history: List[DhPension720BuyHistoryData],
+        winning_by_round: dict[int, DhPension720WinningData],
+    ) -> None:
+        """구매내역을 회차별 당첨번호와 대조해 게임별 결과를 확정합니다."""
+        for item in history:
+            winning = winning_by_round.get(item.round_no)
+            if not winning or not (parts := item.purchase_parts):
+                continue
+            rank, prize = cls._rank_for(parts[0], parts[1], winning)
+            item.rank = rank
+            item.prize = prize
+            item.result = f"{rank} 당첨" if rank else "미당첨"
+            item.winning_number = winning.display_number
+            item.bonus_number = winning.bonus_number
 
     async def async_get_buy_history(self) -> List[DhPension720BuyHistoryData]:
         """구매 이력 조회 (www.dhlottery.co.kr - 로또와 동일 엔드포인트)"""
         try:
             items = await self.client.async_get_buy_list("LP72")
-            return [
-                DhPension720BuyHistoryData(
-                    round_no=item.get("ltEpsd", 0),
-                    issue_dt=item.get("issueDay", ""),
-                    barcode=item.get("gmInfo", ""),
-                    ticket_count=item.get("prchsQty", 0),
-                    amount=item.get("ntslAmt", 0),
-                    result=item.get("ltWnResult", "미추첨"),
+            history = []
+
+            def numeric_value(value) -> int:
+                digits = re.sub(r"\D", "", str(value or ""))
+                return int(digits) if digits else 0
+
+            rank_names = {
+                "1": "1등", "2": "2등", "3": "3등", "4": "4등",
+                "5": "5등", "6": "6등", "7": "7등", "8": "보너스",
+            }
+            for item in items:
+                rank = rank_names.get(str(item.get("wnRnk", "")).strip(), "")
+                history.append(
+                    DhPension720BuyHistoryData(
+                        round_no=numeric_value(item.get("ltEpsd")),
+                        issue_dt=item.get("eltOrdrDt") or item.get("issueDay", ""),
+                        barcode=item.get("gmInfo", ""),
+                        ticket_count=numeric_value(item.get("prchsQty")),
+                        amount=numeric_value(item.get("ntslAmt")),
+                        result=item.get("ltWnResult", "미추첨"),
+                        rank=rank,
+                        prize=numeric_value(item.get("ltWnAmt")),
+                    )
                 )
-                for item in items
-            ]
+            return history
         except Exception as e:
             _LOGGER.error(f"구매 이력 조회 오류: {e}")
             raise DhPension720Error(f"구매 이력 조회 실패: {e}")

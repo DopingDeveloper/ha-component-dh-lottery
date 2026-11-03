@@ -50,6 +50,7 @@ async def async_setup_entry(
             entities.append(DhLotto645HistorySensor(data.lotto_645_coord, i))
     if entry.data.get(CONF_PENSION_720, True):
         entities.append(DhPension720RoundSensor(data.pension_720_coord))
+        entities.append(DhPension720WinningSensor(data.pension_720_coord))
         for i in range(1, 6):
             entities.append(DhPension720HistorySensor(data.pension_720_coord, i))
     async_add_entities(entities)
@@ -322,7 +323,7 @@ class DhPension720HistorySensor(DhSensor, SensorEntity):
             "mdi:clock-outline"
             if result.result == "미추첨"
             else "mdi:trophy-outline"
-            if "당첨" in result.result and "낙첨" not in result.result
+            if result.rank
             else "mdi:close-circle-outline"
         )
         self._attr_extra_state_attributes = {
@@ -333,6 +334,45 @@ class DhPension720HistorySensor(DhSensor, SensorEntity):
             "구매 수량": result.ticket_count,
             "구매 금액": result.amount,
             "당첨 결과": result.result,
+            "당첨 등수": result.rank or "-",
+            "당첨금": result.prize_description,
+            "1등 번호": result.winning_number or "-",
+            "보너스 번호": result.bonus_number or "-",
+            "업데이트": self.coordinator.data["update_dt"],
+        }
+        self.async_write_ha_state()
+
+
+class DhPension720WinningSensor(DhSensor, SensorEntity):
+    """연금복권 720+ 최근 당첨번호 센서입니다."""
+
+    _attr_name = "최근 당첨번호"
+    _attr_icon = "mdi:trophy-award"
+
+    def __init__(self, coordinator: DhPension720Coordinator):
+        super().__init__(coordinator, "pension_720_winning_numbers")
+        self._attr_device_info = get_dh_pension_720_device_info(
+            coordinator.client.username
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        result = self.coordinator.data.get("latest_winning_numbers")
+        if result is None:
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {
+                "업데이트": self.coordinator.data["update_dt"]
+            }
+            self.async_write_ha_state()
+            return
+
+        self._attr_name = f"{result.round_no}회 당첨번호"
+        self._attr_native_value = result.display_number
+        self._attr_extra_state_attributes = {
+            "추첨 회차": result.round_no,
+            "1등 번호": result.display_number,
+            "보너스 번호": result.bonus_number,
+            "추첨일": result.draw_date,
             "업데이트": self.coordinator.data["update_dt"],
         }
         self.async_write_ha_state()

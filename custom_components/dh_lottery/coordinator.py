@@ -303,10 +303,20 @@ class DhPension720Coordinator(DhCoordinator):
                 _LOGGER.info("연금복권 720+ 정보를 업데이트합니다.")
                 round_info = await self.pension_720.async_get_round_info()
                 buy_history = await self.pension_720.async_get_buy_history()
+                winning_numbers = await self.pension_720.async_get_winning_numbers()
+                winning_by_round = {
+                    item.round_no: item for item in winning_numbers
+                }
+                self.pension_720.resolve_buy_history(
+                    buy_history, winning_by_round
+                )
             self._last_updated = now
             return {
                 "round_info": round_info,
                 "buy_history": buy_history[:5],
+                "latest_winning_numbers": (
+                    winning_numbers[0] if winning_numbers else None
+                ),
                 "update_dt": now.strftime("%Y-%m-%d %H:%M:%S"),
             }
         except DhLotteryError as err:
