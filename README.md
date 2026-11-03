@@ -77,6 +77,22 @@ Home Assistant에서 동행복권 계정의 예치금과 구매 내역을 확인
 
 실제 엔티티 ID에는 동행복권 아이디가 포함됩니다. 예: `sensor.dh_아이디_deposit`
 
+## 화면 예시
+
+### 동행복권 계정
+
+![동행복권 계정의 예치금과 새로고침 엔티티](images/device-lottery.png)
+
+### 연금복권 720+
+
+![연금복권 720+ 구매 버튼과 최근 구매 및 당첨 내역](images/device-pension720.png)
+
+### 로또 6/45
+
+![로또 6/45 구매 버튼과 최근 구매 및 당첨 내역](images/device-lotto645-redacted.png)
+
+> 화면 예시의 로또 구매 번호는 개인정보 보호를 위해 삭제했습니다.
+
 ## 액션 사용법
 
 Home Assistant의 **개발자 도구 → 액션**에서 아래 액션을 실행할 수 있습니다. 구매 액션은 응답을 반환하므로 자동화나 스크립트 YAML에서 호출할 때 `response_variable`을 지정합니다.
